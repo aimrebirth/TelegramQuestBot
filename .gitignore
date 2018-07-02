@@ -3,6 +3,7 @@ lib
 /build*
 /.cppan*
 /bin
+/cppan-*
 
 *.dll
 *.lnk

@@ -17,6 +17,14 @@
  */
 
 /*
+local_settings:
+    use_shared_libs: false
+    builds:
+        default:
+            x: x
+        gcc:
+            generator: Ninja
+
 c++: 17
 dependencies:
     - pvt.cppan.demo.reo7sp.tgbot: master
@@ -193,20 +201,17 @@ struct TgQuest
         }
 
         auto text = screens[u.screen]["text"].as<String>();
-        if (screens[u.screen]["script"].IsDefined())
+        if (screens[u.screen]["script"].IsDefined() && u.L)
         {
-            if (screens[u.screen]["script"]["lua"].IsDefined() && u.L)
+            // load file
+            if (luaL_loadstring(u.L, screens[u.screen]["script"].as<String>().c_str()))
             {
-                // load file
-                if (luaL_loadstring(u.L, screens[u.screen]["script"]["lua"].as<String>().c_str()))
-                {
-                    text = "Error during lua script loading";
-                }
-                // execute global statements
-                else if (lua_pcall(u.L, 0, 0, 0))
-                {
-                    text = "Error during lua script execution";
-                }
+                text = "Error during lua script loading";
+            }
+            // execute global statements
+            else if (lua_pcall(u.L, 0, 0, 0))
+            {
+                text = "Error during lua script execution";
             }
         }
 
@@ -242,7 +247,8 @@ struct TgQuest
         }
 
         auto mk = std::make_shared<TgBot::ReplyKeyboardMarkup>();
-        mk->oneTimeKeyboard = true;
+        //mk->oneTimeKeyboard = true;
+        mk->resizeKeyboard = true;
         mk->keyboard = make_keyboard(screens[u.screen]);
         bot.getApi().sendMessage(u.id, text, false, 0, mk, "Markdown");
     }
@@ -280,16 +286,19 @@ int main(int argc, char **argv)
     TgBot::Bot bot(argv[1]);
     TgQuest q(bot, root);
 
-    try
+    while (1)
     {
-        printf("Bot username: %s\n", bot.getApi().getMe()->username.c_str());
-        TgBot::TgLongPoll longPoll(bot);
-        while (1)
-            longPoll.start();
-    }
-    catch (TgBot::TgException &e)
-    {
-        printf("error: %s\n", e.what());
+        try
+        {
+            printf("Bot username: %s\n", bot.getApi().getMe()->username.c_str());
+            TgBot::TgLongPoll longPoll(bot);
+            while (1)
+                longPoll.start();
+        }
+        catch (TgBot::TgException &e)
+        {
+            printf("error: %s\n", e.what());
+        }
     }
 
     return 0;
