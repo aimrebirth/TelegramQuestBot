@@ -297,6 +297,10 @@ int main(int argc, char **argv)
         }
         catch (TgBot::TgException &e)
         {
+            printf("tg error: %s\n", e.what());
+        }
+        catch (std::exception &e)
+        {
             printf("error: %s\n", e.what());
         }
     }
