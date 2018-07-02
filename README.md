@@ -1,4 +1,4 @@
-# Mechanoids Telegram Bot Text Quest Engine
+# Mechanoids Telegram Quest Bot Engine
 
 ## Build
 
