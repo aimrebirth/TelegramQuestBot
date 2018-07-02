@@ -1,0 +1,10 @@
+win*
+lib
+/build*
+/.cppan*
+/bin
+
+*.dll
+*.lnk
+*.exe
+*.bat
