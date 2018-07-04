@@ -27,7 +27,8 @@ local_settings:
 
 c++: 17
 dependencies:
-    - pvt.cppan.demo.reo7sp.tgbot: master
+    #- pvt.cppan.demo.reo7sp.tgbot: master
+    - pvt.cppan.demo.egorpugin.tgbot: master
     - pvt.egorpugin.primitives.yaml: master
     - pvt.cppan.demo.lua: 5
     - pvt.cppan.demo.fmt: 5
@@ -54,6 +55,7 @@ struct user
 {
     int32_t id;
     String screen;
+    String language{"ru"};
     lua_State *L = nullptr;
     std::unordered_map<String, String> variable_types;
 
@@ -71,7 +73,7 @@ struct TgQuest
     yaml screens;
     String initial_screen;
     std::unordered_map<int32_t, user> users;
-    std::mt19937_64 rng;
+    mutable std::mt19937_64 rng;
 
     TgQuest(TgBot::Bot &bot, const yaml &quests)
         : bot(bot)
@@ -111,15 +113,34 @@ struct TgQuest
         });
     }
 
-    String findScreenByMessage(user &u, const String &msg)
+    String getText(user &u, const yaml &v) const
     {
-        auto find = [this, &msg](const auto &row) -> String
+        if (!v["text"].IsDefined())
+            return "error: missing text";
+        if (v["text"].IsScalar())
+            return v["text"].template as<String>();
+        if (v["text"].IsMap())
+        {
+            if (!v["text"][u.language].IsDefined())
+                return "error: no translation for language '" + u.language + "' on screen '" + u.screen + "'";
+            return v["text"][u.language].template as<String>();
+        }
+        return "error: missing text";
+    }
+
+    String findScreenByMessage(user &u, const String &msg) const
+    {
+        auto find = [this, &msg, &u](const auto &row) -> String
         {
             for (const auto &v : row)
             {
                 auto b = std::make_shared<TgBot::KeyboardButton>();
-                if (msg == v.second["text"].template as<String>())
+                if (msg == getText(u, v.second))
                 {
+                    if (v.second["language"].IsDefined())
+                    {
+                        u.language = v.second["language"].as<String>();
+                    }
                     if (v.second["exits"].IsDefined())
                     {
                         if (v.second["exits"].IsSequence())
@@ -153,17 +174,17 @@ struct TgQuest
         return {};
     }
 
-    std::vector<std::vector<TgBot::KeyboardButton::Ptr>> make_keyboard(const yaml &buttons)
+    std::vector<std::vector<TgBot::KeyboardButton::Ptr>> make_keyboard(user &u, const yaml &buttons) const
     {
         std::vector<std::vector<TgBot::KeyboardButton::Ptr>> keyboard;
 
-        auto print_row = [&keyboard](const auto &row)
+        auto print_row = [this, &keyboard, &u](const auto &row)
         {
             std::vector<TgBot::KeyboardButton::Ptr> btns;
             for (const auto &v : row)
             {
                 auto b = std::make_shared<TgBot::KeyboardButton>();
-                b->text = v.second["text"].template as<String>();
+                b->text = getText(u, v.second);
                 btns.push_back(b);
             }
             return btns;
@@ -183,7 +204,7 @@ struct TgQuest
         return keyboard;
     }
 
-    void show_screen(user &u)
+    void show_screen(user &u) const
     {
         if (screens[u.screen]["quest"].IsDefined() &&
             screens[u.screen]["quest"].as<bool>())
@@ -200,20 +221,9 @@ struct TgQuest
                 u.variable_types[kv.first.as<String>()] = kv.second.as<String>();
         }
 
-        auto text = screens[u.screen]["text"].as<String>();
-        if (screens[u.screen]["script"].IsDefined() && u.L)
-        {
-            // load file
-            if (luaL_loadstring(u.L, screens[u.screen]["script"].as<String>().c_str()))
-            {
-                text = "Error during lua script loading";
-            }
-            // execute global statements
-            else if (lua_pcall(u.L, 0, 0, 0))
-            {
-                text = "Error during lua script execution";
-            }
-        }
+        auto text = getText(u, screens[u.screen]);
+        if (auto err = execute_script(u, screens[u.screen]); !err.empty())
+            text = err;
 
         if (u.L)
         {
@@ -249,8 +259,26 @@ struct TgQuest
         auto mk = std::make_shared<TgBot::ReplyKeyboardMarkup>();
         //mk->oneTimeKeyboard = true;
         mk->resizeKeyboard = true;
-        mk->keyboard = make_keyboard(screens[u.screen]);
-        bot.getApi().sendMessage(u.id, text, false, 0, mk, "Markdown");
+        mk->keyboard = make_keyboard(u, screens[u.screen]);
+        bot.getApi().sendMessage(u.id, text, false, 0, mk, "HTML");
+    }
+
+    String execute_script(user &u, const yaml &v) const
+    {
+        if (v["script"].IsDefined() && u.L)
+        {
+            // load file
+            if (luaL_loadstring(u.L, screens[u.screen]["script"].as<String>().c_str()))
+            {
+                return "Error during lua script loading";
+            }
+            // execute global statements
+            else if (lua_pcall(u.L, 0, 0, 0))
+            {
+                return "Error during lua script execution";
+            }
+        }
+        return {};
     }
 
     static double getIntField(lua_State* L, const char* key)
@@ -282,8 +310,23 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    // setup connection
+    auto &curl = TgBot::CurlHttpClient::getInstance();
+
+    curl_easy_setopt(curl.curlSettings, CURLOPT_SSL_VERIFYPEER, 0);
+
+    curl_easy_setopt(curl.curlSettings, CURLOPT_PROXY, proxy_host.c_str());
+    curl_easy_setopt(curl.curlSettings, CURLOPT_PROXYAUTH, CURLAUTH_ANY);
+    if (proxy_host.find("socks5") == 0)
+    {
+        curl_easy_setopt(curl.curlSettings, CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5);
+        curl_easy_setopt(curl.curlSettings, CURLOPT_SOCKS5_AUTH, CURLAUTH_BASIC);
+    }
+    if (!proxy_user.empty())
+        curl_easy_setopt(curl.curlSettings, CURLOPT_PROXYUSERPWD, proxy_user.c_str());
+
     const auto root = YAML::LoadFile(argv[2]);
-    TgBot::Bot bot(argv[1]);
+    TgBot::Bot bot(argv[1], curl);
     TgQuest q(bot, root);
 
     while (1)
