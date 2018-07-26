@@ -27,11 +27,12 @@ local_settings:
 
 c++: 17
 dependencies:
-    #- pvt.cppan.demo.reo7sp.tgbot: master
-    - pvt.cppan.demo.egorpugin.tgbot: master
-    - pvt.egorpugin.primitives.yaml: master
+    - pvt.cppan.demo.reo7sp.tgbot: master
+    #- pvt.cppan.demo.egorpugin.tgbot: master
     - pvt.cppan.demo.lua: 5
     - pvt.cppan.demo.fmt: 5
+    - pvt.egorpugin.primitives.main: master
+    - pvt.egorpugin.primitives.sw.settings: master
 options:
     any:
         link_options:
@@ -43,6 +44,8 @@ options:
 
 #include <fmt/format.h>
 #include <lua.hpp>
+#include <primitives/main.h>
+#include <primitives/sw/settings.h>
 #include <primitives/yaml.h>
 #include <tgbot/tgbot.h>
 
@@ -123,7 +126,12 @@ struct TgQuest
         {
             if (!v["text"][u.language].IsDefined())
                 return "error: no translation for language '" + u.language + "' on screen '" + u.screen + "'";
-            return v["text"][u.language].template as<String>();
+            auto s = v["text"][u.language].template as<String>();
+            if (v["text"]["prefix"].IsDefined())
+                s = v["text"]["prefix"].template as<String>() + " " + s;
+            if (v["text"]["suffix"].IsDefined())
+                s = s + v["text"]["suffix"].template as<String>();
+            return s;
         }
         return "error: missing text";
     }
@@ -304,37 +312,44 @@ struct TgQuest
 
 int main(int argc, char **argv)
 {
-    if (argc != 3)
-    {
-        std::cerr << "bot api_key quests.yml\n";
-        return 1;
-    }
+    sw::setting<bool> use_curl("use_curl");
+    sw::setting<std::string> proxy_host("proxy_host");
+    sw::setting<std::string> proxy_user("proxy_user");
 
     // setup connection
-    auto &curl = TgBot::CurlHttpClient::getInstance();
+    TgBot::CurlHttpClient curl;
 
     curl_easy_setopt(curl.curlSettings, CURLOPT_SSL_VERIFYPEER, 0);
+    //curl_easy_setopt(curl.curlSettings, CURLOPT_SSL_VERIFYHOST, 2);
 
-    curl_easy_setopt(curl.curlSettings, CURLOPT_PROXY, proxy_host.c_str());
-    curl_easy_setopt(curl.curlSettings, CURLOPT_PROXYAUTH, CURLAUTH_ANY);
-    if (proxy_host.find("socks5") == 0)
+    if (!proxy_host.getValue().empty())
     {
-        curl_easy_setopt(curl.curlSettings, CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5);
-        curl_easy_setopt(curl.curlSettings, CURLOPT_SOCKS5_AUTH, CURLAUTH_BASIC);
+        use_curl = true;
+        curl_easy_setopt(curl.curlSettings, CURLOPT_PROXY, proxy_host.getValue().c_str());
+        curl_easy_setopt(curl.curlSettings, CURLOPT_PROXYAUTH, CURLAUTH_ANY);
+        if (proxy_host.getValue().find("socks5") == 0)
+        {
+            curl_easy_setopt(curl.curlSettings, CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5);
+            curl_easy_setopt(curl.curlSettings, CURLOPT_SOCKS5_AUTH, CURLAUTH_BASIC);
+        }
+        if (!proxy_user.getValue().empty())
+            curl_easy_setopt(curl.curlSettings, CURLOPT_PROXYUSERPWD, proxy_user.getValue().c_str());
     }
-    if (!proxy_user.empty())
-        curl_easy_setopt(curl.curlSettings, CURLOPT_PROXYUSERPWD, proxy_user.c_str());
 
-    const auto root = YAML::LoadFile(argv[2]);
-    TgBot::Bot bot(argv[1], curl);
-    TgQuest q(bot, root);
+    const auto root = YAML::LoadFile(getSettings().getLocalSettings()["quests_file"].as<String>());
+    std::unique_ptr<TgBot::Bot> bot;
+    if (use_curl)
+        bot = std::make_unique<TgBot::Bot>(getSettings().getLocalSettings()["bot_token"].as<String>(), curl);
+    else
+        bot = std::make_unique<TgBot::Bot>(getSettings().getLocalSettings()["bot_token"].as<String>());
+    TgQuest q(*bot, root);
 
     while (1)
     {
         try
         {
-            printf("Bot username: %s\n", bot.getApi().getMe()->username.c_str());
-            TgBot::TgLongPoll longPoll(bot);
+            printf("Bot username: %s\n", bot->getApi().getMe()->username.c_str());
+            TgBot::TgLongPoll longPoll(*bot);
             while (1)
                 longPoll.start();
         }
