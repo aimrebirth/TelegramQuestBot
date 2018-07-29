@@ -30,8 +30,7 @@ dependencies:
     - pvt.cppan.demo.reo7sp.tgbot: master
     - pvt.cppan.demo.lua: 5
     - pvt.cppan.demo.fmt: 5
-    - pvt.egorpugin.primitives.main: master
-    - pvt.egorpugin.primitives.sw.settings: master
+    - pvt.egorpugin.primitives.sw.main: master
 options:
     any:
         link_options:
@@ -43,7 +42,7 @@ options:
 
 #include <fmt/format.h>
 #include <lua.hpp>
-#include <primitives/main.h>
+#include <primitives/sw/main.h>
 #include <primitives/sw/settings.h>
 #include <primitives/yaml.h>
 #include <tgbot/tgbot.h>
