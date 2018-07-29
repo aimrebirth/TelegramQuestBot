@@ -28,7 +28,6 @@ local_settings:
 c++: 17
 dependencies:
     - pvt.cppan.demo.reo7sp.tgbot: master
-    #- pvt.cppan.demo.egorpugin.tgbot: master
     - pvt.cppan.demo.lua: 5
     - pvt.cppan.demo.fmt: 5
     - pvt.egorpugin.primitives.main: master

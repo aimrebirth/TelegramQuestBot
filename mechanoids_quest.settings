@@ -1,0 +1,5 @@
+botkey: change_me
+quests_file: quests.yml
+
+proxy_host: ""
+proxy_user: ""
