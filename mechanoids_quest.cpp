@@ -334,12 +334,12 @@ int main(int argc, char **argv)
             curl_easy_setopt(curl.curlSettings, CURLOPT_PROXYUSERPWD, proxy_user.getValue().c_str());
     }
 
-    const auto root = YAML::LoadFile(getSettings().getLocalSettings()["quests_file"].as<String>());
+    const auto root = YAML::LoadFile(sw::getSettings(sw::SettingsType::Local)["quests_file"].as<String>());
     std::unique_ptr<TgBot::Bot> bot;
     if (use_curl)
-        bot = std::make_unique<TgBot::Bot>(getSettings().getLocalSettings()["bot_token"].as<String>(), curl);
+        bot = std::make_unique<TgBot::Bot>(sw::getSettings(sw::SettingsType::Local)["bot_token"].as<String>(), curl);
     else
-        bot = std::make_unique<TgBot::Bot>(getSettings().getLocalSettings()["bot_token"].as<String>());
+        bot = std::make_unique<TgBot::Bot>(sw::getSettings(sw::SettingsType::Local)["bot_token"].as<String>());
     TgQuest q(*bot, root);
 
     while (1)
