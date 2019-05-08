@@ -9,3 +9,6 @@ lib
 *.lnk
 *.exe
 *.bat
+
+.sw
+*.lock
