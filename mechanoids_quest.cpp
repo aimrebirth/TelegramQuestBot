@@ -44,6 +44,7 @@ options:
 #include <lua.hpp>
 #include <primitives/sw/main.h>
 #include <primitives/sw/settings.h>
+#include <primitives/sw/sw.settings.program_name.h>
 #include <primitives/yaml.h>
 #include <tgbot/tgbot.h>
 

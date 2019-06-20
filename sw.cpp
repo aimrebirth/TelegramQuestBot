@@ -4,6 +4,7 @@ void build(Solution &s)
     bot.CPPVersion = CPPLanguageStandard::CPP17;
     bot.PackageDefinitions = true;
     bot += "mechanoids_quest.cpp";
+    bot += "SW_EXECUTABLE"_def;
     bot +=
         "pub.egorpugin.primitives.filesystem-master"_dep,
         "pub.egorpugin.primitives.templates-master"_dep,
