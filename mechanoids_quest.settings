@@ -1,4 +1,4 @@
-botkey: change_me
+bot_token: change_me
 quests_file: quests.yml
 
 proxy_host: ""
