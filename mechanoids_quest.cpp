@@ -16,30 +16,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/*
-local_settings:
-    use_shared_libs: false
-    builds:
-        default:
-            x: x
-        gcc:
-            generator: Ninja
-
-c++: 17
-dependencies:
-    - pvt.cppan.demo.reo7sp.tgbot: master
-    - pvt.cppan.demo.lua: 5
-    - pvt.cppan.demo.fmt: 5
-    - pvt.egorpugin.primitives.sw.main: master
-options:
-    any:
-        link_options:
-            gnu:
-                private:
-                    - -static-libstdc++
-                    - -static-libgcc
-*/
-
 #include <fmt/format.h>
 #include <lua.hpp>
 #include <primitives/sw/main.h>
@@ -146,7 +122,7 @@ struct TgQuest
                 {
                     if (v.second["language"].IsDefined())
                     {
-                        u.language = v.second["language"].as<String>();
+                        u.language = v.second["language"].template as<String>();
                     }
                     if (v.second["exits"].IsDefined())
                     {
@@ -348,7 +324,7 @@ int main(int argc, char **argv)
         try
         {
             printf("Bot username: %s\n", bot->getApi().getMe()->username.c_str());
-            TgBot::TgLongPoll longPoll(*bot);
+            TgBot::TgLongPoll longPoll(*bot, 100, 10);
             while (1)
                 longPoll.start();
         }
