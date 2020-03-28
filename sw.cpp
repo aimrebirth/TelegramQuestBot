@@ -11,6 +11,7 @@ void build(Solution &s)
         "pub.egorpugin.primitives.sw.main-master"_dep,
         "org.sw.demo.lua"_dep,
         "org.sw.demo.fmt"_dep,
-        "org.sw.demo.reo7sp.tgbot"_dep
+        "org.sw.demo.badger.curl.libcurl"_dep,
+        "pub.egorpugin.tgbot"_dep
     ;
 }

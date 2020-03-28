@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <curl/curl.h>
 #include <fmt/format.h>
 #include <lua.hpp>
 #include <primitives/sw/main.h>
@@ -50,7 +51,7 @@ struct TgQuest
     yaml quests;
     yaml screens;
     String initial_screen;
-    std::unordered_map<int32_t, user> users;
+    std::unordered_map<TgBot::Integer, user> users;
     mutable std::mt19937_64 rng;
 
     TgQuest(TgBot::Bot &bot, const yaml &quests)
@@ -61,28 +62,25 @@ struct TgQuest
     {
         initial_screen = quests["initial_screen"].as<String>();
 
-        bot.getEvents().onCommand("start", [&](TgBot::Message::Ptr message)
+        bot.getEvents().onCommand("start", [&](const TgBot::Message &message)
         {
-            auto &u = users[message->from->id];
-            u.id = message->from->id;
+            auto &u = users[message.from->id];
+            u.id = message.from->id;
             u.screen = initial_screen;
             show_screen(u);
         });
 
-        bot.getEvents().onAnyMessage([&](TgBot::Message::Ptr message)
+        bot.getEvents().onNonCommandMessage([&](const TgBot::Message &message)
         {
-            if (StringTools::startsWith(message->text, "/"))
-                return;
-
-            auto &u = users[message->from->id];
-            u.id = message->from->id;
+            auto &u = users[message.from->id];
+            u.id = message.from->id;
             if (u.screen.empty())
             {
                 u.screen = initial_screen;
                 show_screen(u);
                 return;
             }
-            if (auto s = findScreenByMessage(u, message->text); !s.empty())
+            if (auto s = findScreenByMessage(u, *message.text); !s.empty())
             {
                 if (screens[s].IsDefined())
                     u.screen = s;
@@ -153,7 +151,7 @@ struct TgQuest
                 return s;
         }
         else
-            assert(false);
+            SW_UNIMPLEMENTED;
         return {};
     }
 
@@ -166,9 +164,9 @@ struct TgQuest
             std::vector<TgBot::KeyboardButton::Ptr> btns;
             for (const auto &v : row)
             {
-                auto b = std::make_shared<TgBot::KeyboardButton>();
+                auto b = TgBot::createPtr<TgBot::KeyboardButton>();
                 b->text = getText(u, v.second);
-                btns.push_back(b);
+                btns.push_back(std::move(b));
             }
             return btns;
         };
@@ -183,7 +181,7 @@ struct TgQuest
             keyboard.push_back(print_row(buttons["buttons"]));
         }
         else
-            assert(false);
+            SW_UNIMPLEMENTED;
         return keyboard;
     }
 
@@ -239,11 +237,11 @@ struct TgQuest
             }
         }
 
-        auto mk = std::make_shared<TgBot::ReplyKeyboardMarkup>();
+        TgBot::ReplyKeyboardMarkup mk;
         //mk->oneTimeKeyboard = true;
-        mk->resizeKeyboard = true;
-        mk->keyboard = make_keyboard(u, screens[u.screen]);
-        bot.getApi().sendMessage(u.id, text, false, 0, mk, "HTML");
+        mk.resize_keyboard = true;
+        mk.keyboard = make_keyboard(u, screens[u.screen]);
+        bot.getApi().sendMessage(u.id, text, "HTML", {}, {}, {}, std::move(mk));
     }
 
     String execute_script(user &u, const yaml &v) const
@@ -294,21 +292,21 @@ int main(int argc, char **argv)
     // setup connection
     TgBot::CurlHttpClient curl;
 
-    curl_easy_setopt(curl.curlSettings, CURLOPT_SSL_VERIFYPEER, 0);
-    //curl_easy_setopt(curl.curlSettings, CURLOPT_SSL_VERIFYHOST, 2);
+    curl_easy_setopt(curl.getCurl(), CURLOPT_SSL_VERIFYPEER, 0);
+    //curl_easy_setopt(curl.getCurl(), CURLOPT_SSL_VERIFYHOST, 2);
 
     if (!proxy_host.getValue().empty())
     {
         use_curl = true;
-        curl_easy_setopt(curl.curlSettings, CURLOPT_PROXY, proxy_host.getValue().c_str());
-        curl_easy_setopt(curl.curlSettings, CURLOPT_PROXYAUTH, CURLAUTH_ANY);
+        curl_easy_setopt(curl.getCurl(), CURLOPT_PROXY, proxy_host.getValue().c_str());
+        curl_easy_setopt(curl.getCurl(), CURLOPT_PROXYAUTH, CURLAUTH_ANY);
         if (proxy_host.getValue().find("socks5") == 0)
         {
-            curl_easy_setopt(curl.curlSettings, CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5);
-            curl_easy_setopt(curl.curlSettings, CURLOPT_SOCKS5_AUTH, CURLAUTH_BASIC);
+            curl_easy_setopt(curl.getCurl(), CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5);
+            curl_easy_setopt(curl.getCurl(), CURLOPT_SOCKS5_AUTH, CURLAUTH_BASIC);
         }
         if (!proxy_user.getValue().empty())
-            curl_easy_setopt(curl.curlSettings, CURLOPT_PROXYUSERPWD, proxy_user.getValue().c_str());
+            curl_easy_setopt(curl.getCurl(), CURLOPT_PROXYUSERPWD, proxy_user.getValue().c_str());
     }
 
     const auto root = YAML::LoadFile(sw::getSettings(sw::SettingsType::Local)["quests_file"].as<String>());
@@ -323,14 +321,10 @@ int main(int argc, char **argv)
     {
         try
         {
-            printf("Bot username: %s\n", bot->getApi().getMe()->username.c_str());
-            TgBot::TgLongPoll longPoll(*bot, 100, 10);
+            printf("Bot username: %s\n", bot->getApi().getMe()->username->c_str());
+            TgBot::LongPoll longPoll(*bot);
             while (1)
                 longPoll.start();
-        }
-        catch (TgBot::TgException &e)
-        {
-            printf("tg error: %s\n", e.what());
         }
         catch (std::exception &e)
         {
