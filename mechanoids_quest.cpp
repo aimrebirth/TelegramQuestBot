@@ -72,6 +72,8 @@ struct TgQuest
 
         bot.getEvents().onNonCommandMessage([&](const TgBot::Message &message)
         {
+            //bot.getApi().sendMessage(message.from->id, "echo: " + *message.text);
+
             auto &u = users[message.from->id];
             u.id = message.from->id;
             if (u.screen.empty())
@@ -285,46 +287,45 @@ struct TgQuest
 
 int main(int argc, char **argv)
 {
-    sw::setting<bool> use_curl("use_curl");
     sw::setting<std::string> proxy_host("proxy_host");
     sw::setting<std::string> proxy_user("proxy_user");
 
-    // setup connection
-    TgBot::CurlHttpClient curl;
+    const auto root = YAML::LoadFile(sw::getSettings(sw::SettingsType::Local)["quests_file"].as<String>());
+    auto bot = std::make_unique<TgBot::Bot>(sw::getSettings(sw::SettingsType::Local)["bot_token"].as<String>());
 
-    curl_easy_setopt(curl.getCurl(), CURLOPT_SSL_VERIFYPEER, 0);
-    //curl_easy_setopt(curl.getCurl(), CURLOPT_SSL_VERIFYHOST, 2);
+    // setup connection
+    auto curl = bot->getHttpClient().getCurl();
+
+    //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+    //curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, my_trace);
+    //curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
+    //curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2);
 
     if (!proxy_host.getValue().empty())
     {
-        use_curl = true;
-        curl_easy_setopt(curl.getCurl(), CURLOPT_PROXY, proxy_host.getValue().c_str());
-        curl_easy_setopt(curl.getCurl(), CURLOPT_PROXYAUTH, CURLAUTH_ANY);
+        curl_easy_setopt(curl, CURLOPT_PROXY, proxy_host.getValue().c_str());
         if (proxy_host.getValue().find("socks5") == 0)
         {
-            curl_easy_setopt(curl.getCurl(), CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5);
-            curl_easy_setopt(curl.getCurl(), CURLOPT_SOCKS5_AUTH, CURLAUTH_BASIC);
+            curl_easy_setopt(curl, CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5);
+            curl_easy_setopt(curl, CURLOPT_SOCKS5_AUTH, CURLAUTH_BASIC);
         }
+        else
+            curl_easy_setopt(curl, CURLOPT_PROXYAUTH, CURLAUTH_ANY);
         if (!proxy_user.getValue().empty())
-            curl_easy_setopt(curl.getCurl(), CURLOPT_PROXYUSERPWD, proxy_user.getValue().c_str());
+            curl_easy_setopt(curl, CURLOPT_PROXYUSERPWD, proxy_user.getValue().c_str());
     }
 
-    const auto root = YAML::LoadFile(sw::getSettings(sw::SettingsType::Local)["quests_file"].as<String>());
-    std::unique_ptr<TgBot::Bot> bot;
-    if (use_curl)
-        bot = std::make_unique<TgBot::Bot>(sw::getSettings(sw::SettingsType::Local)["bot_token"].as<String>(), curl);
-    else
-        bot = std::make_unique<TgBot::Bot>(sw::getSettings(sw::SettingsType::Local)["bot_token"].as<String>());
     TgQuest q(*bot, root);
-
     while (1)
     {
         try
         {
-            printf("Bot username: %s\n", bot->getApi().getMe()->username->c_str());
-            TgBot::LongPoll longPoll(*bot);
-            while (1)
-                longPoll.start();
+            auto me = bot->getApi().getMe();
+            if (me->username)
+                printf("Bot username: %s\n", me->username->c_str());
+            bot->longPoll();
         }
         catch (std::exception &e)
         {
