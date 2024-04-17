@@ -1,30 +1,17 @@
-﻿/*
- * mechanoids quest
- * Copyright (C) 2018 lzwdgc
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+﻿// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2018-2024 lzwdgc
 
-#include <curl/curl.h>
+#include "curl_http_client.h"
+
 #include <fmt/format.h>
 #include <lua.hpp>
 #include <primitives/sw/main.h>
 #include <primitives/sw/settings.h>
-#include <primitives/sw/sw.settings.program_name.h>
 #include <primitives/yaml.h>
-#include <tgbot/tgbot.h>
+#include <primitives/http.h>
+#include <tgbot/bot.h>
 
+#include <format>
 #include <iostream>
 #include <random>
 #include <unordered_map>
@@ -47,48 +34,20 @@ struct user
 
 struct TgQuest
 {
-    TgBot::Bot &bot;
+    tgbot::bot<curl_http_client> &bot;
     yaml quests;
     yaml screens;
     String initial_screen;
-    std::unordered_map<TgBot::Integer, user> users;
+    std::unordered_map<tgbot::Integer, user> users;
     mutable std::mt19937_64 rng;
 
-    TgQuest(TgBot::Bot &bot, const yaml &quests)
+    TgQuest(auto &bot, const yaml &quests)
         : bot(bot)
         , quests(quests)
         , screens(quests["screens"])
         , rng(std::random_device()())
     {
         initial_screen = quests["initial_screen"].as<String>();
-
-        bot.getEvents().onCommand("start", [&](const TgBot::Message &message)
-        {
-            auto &u = users[message.from->id];
-            u.id = message.from->id;
-            u.screen = initial_screen;
-            show_screen(u);
-        });
-
-        bot.getEvents().onNonCommandMessage([&](const TgBot::Message &message)
-        {
-            //bot.getApi().sendMessage(message.from->id, "echo: " + *message.text);
-
-            auto &u = users[message.from->id];
-            u.id = message.from->id;
-            if (u.screen.empty())
-            {
-                u.screen = initial_screen;
-                show_screen(u);
-                return;
-            }
-            if (auto s = findScreenByMessage(u, *message.text); !s.empty())
-            {
-                if (screens[s].IsDefined())
-                    u.screen = s;
-                show_screen(u);
-            }
-        });
     }
 
     String getText(user &u, const yaml &v) const
@@ -117,7 +76,7 @@ struct TgQuest
         {
             for (const auto &v : row)
             {
-                auto b = std::make_shared<TgBot::KeyboardButton>();
+                auto b = std::make_shared<tgbot::KeyboardButton>();
                 if (msg == getText(u, v.second))
                 {
                     if (v.second["language"].IsDefined())
@@ -157,16 +116,16 @@ struct TgQuest
         return {};
     }
 
-    std::vector<std::vector<TgBot::KeyboardButton::Ptr>> make_keyboard(user &u, const yaml &buttons) const
+    auto make_keyboard(user &u, const yaml &buttons) const
     {
-        std::vector<std::vector<TgBot::KeyboardButton::Ptr>> keyboard;
+        decltype(tgbot::ReplyKeyboardMarkup::keyboard) keyboard;
 
         auto print_row = [this, &keyboard, &u](const auto &row)
         {
-            std::vector<TgBot::KeyboardButton::Ptr> btns;
+            decltype(keyboard)::value_type btns;
             for (const auto &v : row)
             {
-                auto b = TgBot::createPtr<TgBot::KeyboardButton>();
+                auto b = std::make_unique<tgbot::KeyboardButton>();
                 b->text = getText(u, v.second);
                 btns.push_back(std::move(b));
             }
@@ -230,20 +189,26 @@ struct TgQuest
                 {
                     auto &t = i->second;
                     if (t == "int")
-                        text = fmt::format(text, fmt::arg(name, (int)getIntField(u.L, name.c_str())));
+                        text = fmt::format(fmt::runtime(text), fmt::arg(name.c_str(), (int)getIntField(u.L, name.c_str())));
                     else if (t == "string")
-                        text = fmt::format(text, fmt::arg(name, getStringField(u.L, name.c_str())));
+                        text = fmt::format(fmt::runtime(text), fmt::arg(name.c_str(), getStringField(u.L, name.c_str())));
                     else if (t == "float")
-                        text = fmt::format(text, fmt::arg(name, getIntField(u.L, name.c_str())));
+                        text = fmt::format(fmt::runtime(text), fmt::arg(name.c_str(), getIntField(u.L, name.c_str())));
                 }
             }
         }
 
-        TgBot::ReplyKeyboardMarkup mk;
+        tgbot::ReplyKeyboardMarkup mk;
         //mk->oneTimeKeyboard = true;
         mk.resize_keyboard = true;
         mk.keyboard = make_keyboard(u, screens[u.screen]);
-        bot.getApi().sendMessage(u.id, text, "HTML", {}, {}, {}, std::move(mk));
+
+        tgbot::sendMessageRequest req;
+        req.chat_id = u.id;
+        req.text = text;
+        req.parse_mode = tgbot::ParseMode::HTML;
+        req.reply_markup = std::move(mk);
+        bot.api().sendMessage(req);
     }
 
     String execute_script(user &u, const yaml &v) const
@@ -283,36 +248,111 @@ struct TgQuest
         lua_pop(L, 1);  // remove string from stack
         return result;
     }
+
+    //
+    std::string botname;
+    std::string botvisiblename;
+
+    static const int default_update_limit = 100;
+    static const int default_update_timeout = 10;
+    int net_delay_on_error = 1;
+
+    tgbot::Integer process_updates(tgbot::Integer offset = 0, tgbot::Integer limit = default_update_limit,
+                                   tgbot::Integer timeout = default_update_timeout,
+                                   const tgbot::Optional<tgbot::Vector<String>> &allowed_updates = {}) {
+        // update timeout here for getUpdates()
+        ((curl_http_client &)bot.http_client()).set_timeout(timeout);
+
+        auto updates = bot.api().getUpdates(offset, limit, timeout, allowed_updates);
+        for (const auto &item : updates) {
+            // if updates come unsorted, we must check this
+            if (item.update_id >= offset)
+                offset = item.update_id + 1;
+            process_update(item);
+        }
+        return offset;
+    }
+    void process_update(const tgbot::Update &update) {
+        try {
+            handle_update(update);
+        } catch (std::exception &e) {
+            printf("error: %s\n", e.what());
+
+            std::this_thread::sleep_for(std::chrono::seconds(net_delay_on_error));
+            if (net_delay_on_error < 30)
+                net_delay_on_error *= 2;
+        }
+    }
+    void long_poll(tgbot::Integer limit = default_update_limit, tgbot::Integer timeout = default_update_timeout,
+                   const tgbot::Optional<tgbot::Vector<String>> &allowed_updates = {}) {
+        tgbot::Integer offset = 0;
+        while (1) {
+            try {
+                offset = process_updates(offset, limit, timeout, allowed_updates);
+            } catch (std::exception &e) {
+                printf("error: %s\n", e.what());
+                ++offset; // we skip erroneous message
+            }
+        }
+    }
+    void handle_update(const tgbot::Update &update) {
+        if (update.message) {
+            handle_message(*update.message);
+        }
+    }
+    void handle_message(const tgbot::Message &message) {
+        if (!message.text) {
+            return;
+        }
+        if (message.text->starts_with("/")) {
+            if (*message.text == "/start") {
+                auto &u = users[message.from->id];
+                u.id = message.from->id;
+                u.screen = initial_screen;
+                show_screen(u);
+            }
+            return;
+        }
+
+        auto &u = users[message.from->id];
+        u.id = message.from->id;
+        if (u.screen.empty()) {
+            u.screen = initial_screen;
+            show_screen(u);
+            return;
+        }
+        if (auto s = findScreenByMessage(u, *message.text); !s.empty()) {
+            if (screens[s].IsDefined())
+                u.screen = s;
+            show_screen(u);
+        }
+    }
 };
 
-int main(int argc, char **argv)
-{
+int main(int argc, char *argv[]) {
+    primitives::http::setupSafeTls();
+
     sw::setting<std::string> proxy_host("proxy_host");
     sw::setting<std::string> proxy_user("proxy_user");
 
     const auto root = YAML::LoadFile(sw::getSettings(sw::SettingsType::Local)["quests_file"].as<String>());
-    auto bot = std::make_unique<TgBot::Bot>(sw::getSettings(sw::SettingsType::Local)["bot_token"].as<String>());
+
+    curl_http_client client;
+    auto bot = std::make_unique<tgbot::bot<curl_http_client>>(sw::getSettings(sw::SettingsType::Local)["bot_token"].as<String>(), client);
 
     // setup connection
-    auto curl = bot->getHttpClient().getCurl();
-
-    //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
-    //curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, my_trace);
-    //curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
-
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
-    //curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2);
+    auto curl = client.curl_settings();
 
     if (!proxy_host.getValue().empty())
     {
         curl_easy_setopt(curl, CURLOPT_PROXY, proxy_host.getValue().c_str());
+        curl_easy_setopt(curl, CURLOPT_PROXYAUTH, CURLAUTH_ANY);
         if (proxy_host.getValue().find("socks5") == 0)
         {
             curl_easy_setopt(curl, CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5);
             curl_easy_setopt(curl, CURLOPT_SOCKS5_AUTH, CURLAUTH_BASIC);
+            curl_easy_setopt(curl, CURLOPT_PROXYAUTH, CURLAUTH_BASIC);
         }
-        else
-            curl_easy_setopt(curl, CURLOPT_PROXYAUTH, CURLAUTH_ANY);
         if (!proxy_user.getValue().empty())
             curl_easy_setopt(curl, CURLOPT_PROXYUSERPWD, proxy_user.getValue().c_str());
     }
@@ -322,10 +362,10 @@ int main(int argc, char **argv)
     {
         try
         {
-            auto me = bot->getApi().getMe();
-            if (me->username)
-                printf("Bot username: %s\n", me->username->c_str());
-            bot->longPoll();
+            auto me = bot->api().getMe();
+            if (me.username)
+                printf("Bot username: %s\n", me.username->c_str());
+            q.long_poll();
         }
         catch (std::exception &e)
         {

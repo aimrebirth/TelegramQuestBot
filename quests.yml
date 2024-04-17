@@ -27,7 +27,6 @@ buttons:
             en: Continue.
             ru: Продолжить.
 
-
 screens:
     start:
         text:
